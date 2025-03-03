@@ -1,5 +1,6 @@
 # 🚀 Marketing Data Platform - Azure Synapse & Power BI
 
+![Diagram](https://raw.githubusercontent.com/yassinemahboub/synapse_analytics_marketing_data/refs/heads/main/assets/Diagram.png)
 
 
 ## **📌 Project Overview**
@@ -118,6 +119,8 @@ df_silver = df_bronze.select(
   - `dim_ad` (Ad-Level Attributes)
   - `dim_platform` (Placement & Device Info)
 
+![Data Model](https://raw.githubusercontent.com/yassinemahboub/synapse_analytics_marketing_data/refs/heads/main/assets/data_model.png)
+
 ### 📌 Example: Create External Table in Synapse SQL
 
 ```sql
@@ -163,5 +166,7 @@ GO
   - **Conversion Rate:** `(actions_lead / clicks) * 100`
 - Filters & Slicers allow users to drill down into campaign performance.
 
-## Example Power BI Dataset Model
-*(Provide your model details here)*
+## Example Power BI Dashboard
+
+![Meta Ads Power BI Dashboard](https://raw.githubusercontent.com/yassinemahboub/synapse_analytics_marketing_data/refs/heads/main/assets/dashboard.png)
+
