@@ -44,52 +44,124 @@ The data is stored in **ADLS Gen2** and visualized in **Power BI**.
 
 # 📐 Architectural Components & Design Principles
 
-## 1️⃣ Data Ingestion Layer (Batch & Incremental Ingestion)
+## 1️⃣ Data Ingestion: Windsor.ai API Integration
 
-**Orchestrated by Azure Data Factory (ADF):**
-- Uses REST API connectors to extract data from the Facebook Ads API.
-- Implements parameterized pipelines for historical backfill and incremental daily refresh.
-- Ensures fault tolerance with retry logic and logging mechanisms.
+- **Data Source:** Facebook Ads performance data is retrieved via Windsor.ai's API.
+- **API Configuration:** The API endpoint dynamically pulls key performance metrics.
+- **Orchestration:** Azure Data Factory (ADF) schedules and automates API calls.
+- **Authentication:** Uses API keys for secure data retrieval.
 
-**Raw Data Storage:**
-- Data is ingested into Azure Data Lake Storage Gen2 (ADLS) in the Bronze Layer.
-- Stored in JSON format to retain raw API responses for future reprocessing if needed.
-- Data is partitioned by date to optimize query performance.
+### 📌 Example API Request (Used in Synapse Notebooks)
 
-## 2️⃣ Data Processing Layer (ETL & Schema Enforcement)
+```python
+url = https://connectors.windsor.ai/facebook?api_key=YOUR_API_KEY
+&date_preset=last_7d&fields=ad_id,ad_name,adcontent,ad_created_time
+```
 
-**Processing Engine: Azure Synapse Analytics (Apache Spark Pools)**
-- Uses PySpark notebooks to cleanse, normalize, and transform data into a structured format.
-- Applies schema enforcement and data type casting to ensure consistency.
-- Implements idempotency to prevent data duplication during incremental loads.
+- Extracts campaign-level and ad-level performance data.
+- Supports date filtering to fetch historical and incremental data.
+- Configured as a parameterized request to allow dynamic extraction in Synapse Pipelines.
 
-**Bronze → Silver Transformation (Schema Normalization & Data Cleaning):**
-- Converts JSON to Parquet format for high-performance query execution.
-- Performs type casting (e.g., string → date, float → int).
-- Handles slowly changing dimensions (SCDs) for dimensions like ad_campaigns and adsets.
-- Enforces business rules by removing invalid records to ensure data integrity.
+## 2️⃣ Data Storage: Bronze Layer (Raw Storage)
 
-## 3️⃣ Data Warehousing Layer (Analytical Storage - Gold Layer)
+- Extracted JSON data from Windsor.ai API is stored in Azure Data Lake Storage (ADLS Gen2).
 
-**Logical Data Warehouse in Azure Synapse Serverless SQL:**
-- Structured as a star schema with fact tables and dimension tables for optimized reporting.
-- Uses external tables to query Parquet files stored in ADLS without duplicating data.
-- Implements a partitioning strategy to improve query performance using date-based partitions.
+- **Storage Format:** JSON files (for raw ingestion) → Parquet files (for efficient querying).
 
-**Fact & Dimension Table Modeling:**
-- **fact_facebook_ads_metrics:** Stores aggregated ad performance data (clicks, impressions, spend, etc.).
-- **dim_ad:** Stores metadata about each advertisement.
-- **dim_adset:** Contains ad set configurations (targeting, budget, etc.).
-- **dim_campaign:** Tracks campaign-level performance and objectives.
-- **dim_platform:** Stores information on ad placement across different publisher platforms.
+- **Partition Strategy:**
+  - Partitioned by Year/Month/Day for optimized query performance.
 
-## 4️⃣ Data Consumption & Analytics (Power BI Reporting)
+  - Enables incremental data ingestion.
 
-**DirectQuery Mode for Real-Time Analysis:**
-- Power BI connects to Synapse Serverless SQL via DirectQuery for real-time analytics.
-- Allows business users to filter, aggregate, and analyze ad performance data interactively.
+### 📌 Storage Example
 
-**Optimized Data Model for BI:**
-- Joins between fact and dimension tables ensure faster query performance.
-- Pre-aggregated metrics and KPIs (CTR, CPM, CPA) improve visualization speed.
+```plaintext
+/bronze/facebook_ads/2024/03/01/facebook_ads_data.json
+```
+## 3️⃣ Data Processing: Silver Layer (ETL & Schema Enforcement)
 
+- **Processing Engine:** Azure Synapse Apache Spark (PySpark) Notebooks.
+- **Transformations:**
+  - Schema enforcement: Convert raw JSON fields into structured tables.
+  - Data type casting: Ensure float, int, datetime conversions.
+  - Data deduplication & validation.
+
+### Example PySpark Transformation in Synapse
+
+```python
+from pyspark.sql.functions import col, to_date
+
+df_silver = df_bronze.select(
+    to_date(col("date"), "yyyy-MM-dd").alias("date"),
+    col("campaign_id").cast("string"),
+    col("ad_id").cast("string"),
+    col("clicks").cast("int"),
+    col("spend").cast("float"),
+    col("impressions").cast("int")
+)
+```
+- **Schema Normalization:** Converts API fields into structured tables.
+
+- **Parquet Format Optimization:** Reduces storage costs and improves query speed.
+
+### Processed Data Example in ADLS (Silver Layer)
+
+```plaintext
+/silver/facebook_ads/fact_facebook_ads_metrics/2024/03/01/data.parquet
+```
+## 4️⃣ Data Warehouse: Gold Layer (Synapse SQL - External Tables)
+
+- **Fact & Dimension Table Design:**
+  - `fact_facebook_ads_metrics` (Aggregated Ads Performance)
+  - `dim_campaign` (Campaign Details)
+  - `dim_adset` (Ad Set Metadata)
+  - `dim_ad` (Ad-Level Attributes)
+  - `dim_platform` (Placement & Device Info)
+
+### 📌 Example: Create External Table in Synapse SQL
+
+```sql
+USE facebook_ads
+
+-- CREATE EXTERNAL FACT TABLE
+
+CREATE EXTERNAL TABLE dbo.fact_metrics (
+	[date] date,
+	[ad_id] nvarchar(4000),
+	[adset_id] nvarchar(4000),
+	[campaign_id] nvarchar(4000),
+	[account_id] nvarchar(4000),
+	[placement] nvarchar(4000),
+	[platform] nvarchar(4000),
+	[spend] real,
+	[impressions] int,
+	[clicks] int,
+	[frequency] real,
+	[leads] int,
+	[ad_engagement] int,
+	[video_views] int,
+	[thruplay_video_views] int,
+	[load_date] datetime2(7),
+	[source] nvarchar(4000)
+	)
+	WITH (
+	LOCATION = 'facebook_ads/fact_facebook_ads_metrics/**',
+	DATA_SOURCE = silver,
+	FILE_FORMAT = ParquetFormat
+	)
+GO
+```
+- **Directly queries Parquet files from ADLS** without duplicating data.
+- **Supports partition pruning** for optimized performance.
+
+## 5️⃣ Business Intelligence: Power BI Dashboard
+
+- **DirectQuery Mode:** Enables real-time analysis by querying Synapse SQL tables directly.
+- **Pre-aggregated Metrics & KPIs:**
+  - **Cost Per Click (CPC):** `spend / clicks`
+  - **Click-Through Rate (CTR):** `(clicks / impressions) * 100`
+  - **Conversion Rate:** `(actions_lead / clicks) * 100`
+- Filters & Slicers allow users to drill down into campaign performance.
+
+## Example Power BI Dataset Model
+*(Provide your model details here)*
